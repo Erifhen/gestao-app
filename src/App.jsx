@@ -1,52 +1,73 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Plus, Trash2, Printer, Repeat, CheckCircle, XCircle, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { 
+  Search, Plus, Trash2, CheckSquare, 
+  Square, ChevronLeft, ChevronRight, X, Edit2, Settings,
+  PieChart, Tag as TagIcon, Download, Upload, AlertCircle
+} from 'lucide-react';
 
-const STORAGE_KEY = 'finance_manager_data_v1';
+const STORAGE_KEY = 'finance_manager_data_v4';
 
 const App = () => {
   // --- ESTADO ---
   const [data, setData] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : { boletos: [], entities: [
-      { id: '1', name: 'Empresa A', active: true, color: '#10b981' },
-      { id: '2', name: 'Empresa B', active: true, color: '#3b82f6' }
-    ] };
+    return saved ? JSON.parse(saved) : { 
+      boletos: [], 
+      entities: [
+        { id: '1', name: 'Entidade Alfa', active: true, color: '#10b981' },
+        { id: '2', name: 'Entidade Beta', active: true, color: '#3b82f6' }
+      ] 
+    };
   });
 
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDays, setSelectedDays] = useState([]);
+  const [selectedDay, setSelectedDay] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Modais
   const [isBoletoModalOpen, setIsBoletoModalOpen] = useState(false);
-  const [isDayDetailOpen, setIsDayDetailOpen] = useState(null); // Armazena o dia selecionado (1-31)
-  const [isEntityModalOpen, setIsEntityModalOpen] = useState(false);
+  const [isEntityConfigOpen, setIsEntityConfigOpen] = useState(false);
+  const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
+  const [editingEntity, setEditingEntity] = useState(null);
+  const [editingBoletoId, setEditingBoletoId] = useState(null);
 
-  // Form State para Novo Boleto
+  // Form States
   const [newBoleto, setNewBoleto] = useState({
-    nome: '',
-    entidadeId: '',
-    valor: '',
-    vencimento: '',
-    pago: false,
-    repetir: false,
-    emitido: false
+    nome: '', entidadeId: '', valorTotal: '', vencimento: '', 
+    pago: false, repetir: false, tags: [] 
   });
+  const [tempTag, setTempTag] = useState({ label: '', value: '' });
 
   // --- PERSISTÊNCIA ---
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   }, [data]);
 
-  // --- LÓGICA DE CALENDÁRIO ---
+  // --- AUXILIARES DE DATA ---
+  const parseDateLocal = (dateStr) => {
+    if (!dateStr) return new Date();
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  };
+
   const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
   const monthName = currentDate.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
 
   const changeMonth = (offset) => {
     const next = new Date(currentDate.getFullYear(), currentDate.getMonth() + offset, 1);
     setCurrentDate(next);
-    setSelectedDays([]);
+    setSelectedDay(null);
   };
 
-  // --- FILTRAGEM E CÁLCULOS ---
+  const getInitials = (name) => {
+    const parts = name.trim().split(' ');
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return name.substring(0, 2).toUpperCase();
+  };
+
+  // --- FILTRAGEM ---
   const activeEntityIds = useMemo(() => 
     data.entities.filter(e => e.active).map(e => e.id), 
     [data.entities]
@@ -54,51 +75,78 @@ const App = () => {
 
   const filteredBoletos = useMemo(() => {
     return data.boletos.filter(b => {
-      const bDate = new Date(b.vencimento);
+      const bDate = parseDateLocal(b.vencimento);
       const isSameMonth = bDate.getMonth() === currentDate.getMonth() && bDate.getFullYear() === currentDate.getFullYear();
-      
-      // Lógica de Repetição: Aparece se for o mesmo dia do mês, independente do ano/mês (se for data futura ou igual)
-      const isRepeated = b.repetir && bDate.getDate() && (new Date(b.vencimento) <= new Date(currentDate.getFullYear(), currentDate.getMonth(), bDate.getDate()));
-      
       const matchesSearch = b.nome.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesEntity = activeEntityIds.includes(b.entidadeId);
-      
-      return (isSameMonth || isRepeated) && matchesSearch && matchesEntity;
+      return isSameMonth && matchesSearch && matchesEntity;
     });
   }, [data.boletos, currentDate, searchQuery, activeEntityIds]);
 
-  // Totais baseados nos DIAS SELECIONADOS e ENTIDADES ATIVAS
-  const stats = useMemo(() => {
-    const targetBoletos = filteredBoletos.filter(b => {
-      const d = new Date(b.vencimento).getDate();
-      return selectedDays.length === 0 || selectedDays.includes(d);
+  const tagAnalytics = useMemo(() => {
+    const totals = {};
+    filteredBoletos.forEach(b => {
+      if (b.tags && b.tags.length > 0) {
+        b.tags.forEach(t => {
+          const label = t.label.trim().toLowerCase();
+          const val = parseFloat(t.value) || 0;
+          totals[label] = (totals[label] || 0) + val;
+        });
+      } else {
+        const val = parseFloat(b.valorTotal) || 0;
+        totals['sem categoria'] = (totals['sem categoria'] || 0) + val;
+      }
     });
+    return Object.entries(totals).sort((a, b) => b[1] - a[1]);
+  }, [filteredBoletos]);
+
+  const stats = useMemo(() => {
+    const targetBoletos = selectedDay 
+      ? filteredBoletos.filter(b => parseDateLocal(b.vencimento).getDate() === selectedDay)
+      : filteredBoletos;
 
     return targetBoletos.reduce((acc, b) => {
-      const val = parseFloat(b.valor) || 0;
-      if (b.pago) acc.pago += val;
-      else acc.pendente += val;
+      const val = parseFloat(b.valorTotal) || 0;
+      if (b.pago) acc.pago += val; else acc.pendente += val;
       return acc;
     }, { pago: 0, pendente: 0 });
-  }, [filteredBoletos, selectedDays]);
+  }, [filteredBoletos, selectedDay]);
 
-  // --- AÇÕES ---
-  const handleAddBoleto = (e) => {
-    e.preventDefault();
-    const id = crypto.randomUUID();
-    setData(prev => ({
-      ...prev,
-      boletos: [...prev.boletos, { ...newBoleto, id }]
-    }));
-    setIsBoletoModalOpen(false);
-    setNewBoleto({ nome: '', entidadeId: '', valor: '', vencimento: '', pago: false, repetir: false, emitido: false });
+  // --- AÇÕES CRUD ---
+  const openEditBoleto = (boleto) => {
+    setEditingBoletoId(boleto.id);
+    setNewBoleto({ ...boleto });
+    setIsBoletoModalOpen(true);
   };
 
-  const toggleBoletoStatus = (id, field) => {
-    setData(prev => ({
-      ...prev,
-      boletos: prev.boletos.map(b => b.id === id ? { ...b, [field]: !b[field] } : b)
-    }));
+  const handleAddOrUpdateBoleto = (e) => {
+    e.preventDefault();
+    if (!newBoleto.entidadeId || !newBoleto.vencimento) return;
+
+    if (editingBoletoId) {
+      setData(prev => ({
+        ...prev,
+        boletos: prev.boletos.map(b => b.id === editingBoletoId ? { ...newBoleto } : b)
+      }));
+    } else {
+      const id = crypto.randomUUID();
+      setData(prev => ({
+        ...prev,
+        boletos: [...prev.boletos, { ...newBoleto, id }]
+      }));
+    }
+
+    closeBoletoModal();
+  };
+
+  const closeBoletoModal = () => {
+    setEditingBoletoId(null);
+    setNewBoleto({
+      nome: '', entidadeId: '', valorTotal: '', vencimento: '', 
+      pago: false, repetir: false, tags: []
+    });
+    setTempTag({ label: '', value: '' });
+    setIsBoletoModalOpen(false);
   };
 
   const deleteBoleto = (id) => {
@@ -108,350 +156,423 @@ const App = () => {
     }));
   };
 
-  const toggleEntity = (id) => {
+  const toggleBoletoStatus = (id, field) => {
     setData(prev => ({
       ...prev,
-      entities: prev.entities.map(e => e.id === id ? { ...e, active: !e.active } : e)
+      boletos: prev.boletos.map(b => b.id === id ? { ...b, [field]: !b[field] } : b)
     }));
   };
 
-  const deselectAll = () => {
-    setSelectedDays([]);
-    setData(prev => ({
+  // --- IMPORT/EXPORT ---
+  const exportData = () => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `finance_export_${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importData = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target.result);
+        if (json.boletos && json.entities) {
+          setData(json);
+        }
+      } catch (err) {
+        console.error("Erro ao importar arquivo");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const addTagToForm = () => {
+    if (!tempTag.label || !tempTag.value) return;
+    setNewBoleto(prev => ({
       ...prev,
-      entities: prev.entities.map(e => ({ ...e, active: false }))
+      tags: [...prev.tags, { ...tempTag, id: crypto.randomUUID() }]
+    }));
+    setTempTag({ label: '', value: '' });
+  };
+
+  const removeTagFromForm = (id) => {
+    setNewBoleto(prev => ({
+      ...prev,
+      tags: prev.tags.filter(t => t.id !== id)
     }));
   };
 
-  const toggleDaySelection = (day) => {
-    setSelectedDays(prev => 
-      prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
-    );
+  const handleSaveEntity = (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const name = formData.get('name');
+    const color = formData.get('color');
+
+    if (editingEntity) {
+      setData(prev => ({
+        ...prev,
+        entities: prev.entities.map(ent => ent.id === editingEntity.id ? { ...ent, name, color } : ent)
+      }));
+    } else {
+      setData(prev => ({
+        ...prev,
+        entities: [...prev.entities, { id: crypto.randomUUID(), name, color, active: true }]
+      }));
+    }
+    setEditingEntity(null);
   };
 
   return (
-    <div className="flex h-screen bg-[#0f1115] text-slate-300 overflow-hidden font-sans">
+    <div className="flex flex-col md:flex-row h-screen bg-[#0a0c10] text-slate-300 overflow-hidden font-sans">
       
-      {/* BARRA ESQUERDA: BUSCA E ADICIONAR */}
-      <aside className="w-72 border-r border-slate-800 p-6 flex flex-col gap-6 bg-[#0f1115]">
-        <div className="space-y-2">
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            <div className="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
-            Gestão Financeira
-          </h1>
-          <p className="text-xs text-slate-500 uppercase tracking-widest">Pagamentos futuros</p>
-        </div>
+      {/* SIDEBAR ESQUERDA */}
+      <aside className="w-full md:w-72 border-b md:border-b-0 md:border-r border-slate-800 p-6 flex flex-col gap-6 bg-[#0a0c10] z-20">
+        <h1 className="text-xl font-bold text-white flex items-center gap-2">
+          <div className="w-3 h-3 bg-emerald-500 rounded-full"></div>
+          Gestão Financeira
+        </h1>
 
         <div className="relative">
           <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
           <input 
             type="text" 
-            placeholder="Pesquisar boletos..." 
+            placeholder="Buscar pagamento..." 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-900/50 border border-slate-800 rounded-xl pl-10 pr-4 py-2 text-sm focus:ring-1 focus:ring-emerald-500 outline-none transition-all"
+            className="w-full bg-slate-900/50 border border-slate-800 rounded-xl pl-10 pr-4 py-2 text-sm focus:ring-1 focus:ring-emerald-500 outline-none"
           />
         </div>
 
-        <button 
-          onClick={() => setIsBoletoModalOpen(true)}
-          className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-xl font-semibold shadow-lg shadow-emerald-900/20 transition-all active:scale-95"
-        >
-          <Plus size={18} /> Novo Boleto
-        </button>
+        <div className="flex flex-col gap-2">
+          <button 
+            onClick={() => setIsBoletoModalOpen(true)}
+            className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-xl font-semibold transition-all active:scale-95 shadow-lg shadow-emerald-900/20"
+          >
+            <Plus size={18} /> Novo Lançamento
+          </button>
 
-        <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-          {searchQuery && (
-            <div className="text-xs text-slate-500 px-2 py-1">Resultados da busca:</div>
-          )}
-          {filteredBoletos.filter(b => b.nome.toLowerCase().includes(searchQuery.toLowerCase())).map(b => (
-            <div key={b.id} className="p-3 bg-slate-900/30 border border-slate-800 rounded-lg flex justify-between items-center group">
-              <div>
-                <p className="text-sm font-medium text-slate-200">{b.nome}</p>
-                <p className="text-[10px] text-slate-500">{new Date(b.vencimento).toLocaleDateString()}</p>
-              </div>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={() => deleteBoleto(b.id)} className="p-1 hover:text-red-400"><Trash2 size={14}/></button>
-              </div>
-            </div>
-          ))}
+          <button 
+            onClick={() => setIsAnalyticsOpen(true)}
+            className="flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 py-3 rounded-xl font-semibold transition-all"
+          >
+            <PieChart size={18} /> Resumo por Categoria
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <button 
+            onClick={exportData}
+            className="flex flex-col items-center justify-center gap-1 bg-slate-900 border border-slate-800 p-2 rounded-xl text-[10px] font-bold text-slate-400 hover:text-white transition-colors"
+          >
+            <Download size={14} /> EXPORTAR
+          </button>
+          <label className="flex flex-col items-center justify-center gap-1 bg-slate-900 border border-slate-800 p-2 rounded-xl text-[10px] font-bold text-slate-400 hover:text-white transition-colors cursor-pointer">
+            <Upload size={14} /> IMPORTAR
+            <input type="file" accept=".json" onChange={importData} className="hidden" />
+          </label>
+        </div>
+
+        <div className="mt-auto flex flex-col gap-2">
+           <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-1">Entidades Ativas</p>
+           <div className="flex flex-wrap gap-2">
+              {data.entities.map(ent => (
+                <button 
+                  key={ent.id}
+                  onClick={() => setData(prev => ({ ...prev, entities: prev.entities.map(e => e.id === ent.id ? {...e, active: !e.active} : e) }))}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-all ${ent.active ? 'border-transparent text-white' : 'border-slate-800 text-slate-600 bg-transparent'}`}
+                  style={{ backgroundColor: ent.active ? ent.color : 'transparent' }}
+                >
+                  {getInitials(ent.name)}
+                </button>
+              ))}
+              <button onClick={() => setIsEntityConfigOpen(true)} className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-500 hover:text-white transition-colors">
+                <Settings size={14}/>
+              </button>
+           </div>
         </div>
       </aside>
 
-      {/* ÁREA CENTRAL: CALENDÁRIO */}
-      <main className="flex-1 flex flex-col p-8 relative">
+      {/* ÁREA CENTRAL */}
+      <main className="flex-1 flex flex-col p-4 md:p-8 overflow-y-auto no-scrollbar">
         <header className="flex justify-between items-center mb-8">
-          <div className="flex items-center gap-4">
-            <h2 className="text-3xl font-light text-white capitalize">{monthName}</h2>
-            <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800">
-              <button onClick={() => changeMonth(-1)} className="p-2 hover:bg-slate-800 rounded-md transition-colors"><ChevronLeft size={20}/></button>
-              <button onClick={() => changeMonth(1)} className="p-2 hover:bg-slate-800 rounded-md transition-colors"><ChevronRight size={20}/></button>
+          <div className="flex items-center gap-6">
+            <h2 className="text-2xl md:text-4xl font-light text-white capitalize">{monthName}</h2>
+            <div className="flex bg-slate-900 rounded-xl p-1 border border-slate-800">
+              <button onClick={() => changeMonth(-1)} className="p-2 hover:bg-slate-800 rounded-lg"><ChevronLeft size={20}/></button>
+              <button onClick={() => changeMonth(1)} className="p-2 hover:bg-slate-800 rounded-lg"><ChevronRight size={20}/></button>
             </div>
           </div>
-          
-          <div className="text-right">
-            <p className="text-xs text-slate-500 uppercase tracking-tighter">Hoje</p>
-            <p className="text-sm font-mono text-emerald-500">{new Date().toLocaleDateString('pt-BR')}</p>
-          </div>
+          {selectedDay && (
+            <button onClick={() => setSelectedDay(null)} className="text-xs bg-emerald-500/10 text-emerald-500 px-3 py-1 rounded-full border border-emerald-500/20">
+              Ver mês inteiro
+            </button>
+          )}
         </header>
 
-        {/* GRID DO CALENDÁRIO */}
-        <div className="grid grid-cols-7 gap-3 flex-1 auto-rows-fr">
+        <div className="grid grid-cols-7 gap-2 md:gap-4 flex-1 auto-rows-fr">
           {[...Array(daysInMonth)].map((_, i) => {
             const day = i + 1;
-            const isSelected = selectedDays.includes(day);
-            const dayBoletos = filteredBoletos.filter(b => new Date(b.vencimento).getDate() === day);
+            const isSelected = selectedDay === day;
+            const dayBoletos = filteredBoletos.filter(b => parseDateLocal(b.vencimento).getDate() === day);
             const hasPending = dayBoletos.some(b => !b.pago);
-            const allPaid = dayBoletos.length > 0 && dayBoletos.every(b => b.pago);
 
             return (
               <div 
                 key={day}
-                onClick={() => toggleDaySelection(day)}
-                onDoubleClick={() => setIsDayDetailOpen(day)}
-                className={`relative rounded-2xl border transition-all cursor-pointer group flex flex-col p-4
-                  ${isSelected 
-                    ? 'bg-emerald-500/10 border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.1)]' 
-                    : 'bg-slate-900/20 border-slate-800 hover:border-slate-700'}
+                onClick={() => setSelectedDay(day)}
+                className={`relative rounded-2xl border transition-all cursor-pointer flex flex-col p-3 min-h-[80px] md:min-h-[120px]
+                  ${isSelected ? 'bg-emerald-500/10 border-emerald-500/50 ring-1 ring-emerald-500/50' : 'bg-slate-900/30 border-slate-800 hover:border-slate-600'}
                 `}
               >
-                <span className={`text-lg font-medium mb-1 ${isSelected ? 'text-emerald-400' : 'text-slate-500 group-hover:text-slate-300'}`}>
+                <span className={`text-sm md:text-xl font-medium ${isSelected ? 'text-emerald-400' : 'text-slate-500'}`}>
                   {day}
                 </span>
                 
-                <div className="flex-1 flex flex-col gap-1 overflow-hidden">
-                  {dayBoletos.slice(0, 2).map(b => (
-                    <div key={b.id} className="text-[10px] truncate flex items-center gap-1 bg-slate-800/50 px-1.5 py-0.5 rounded">
-                      <div className={`w-1 h-1 rounded-full ${b.pago ? 'bg-emerald-500' : 'bg-rose-500'}`}></div>
-                      {b.nome}
+                <div className="mt-2 flex flex-col gap-1 overflow-hidden">
+                  {dayBoletos.map(b => (
+                    <div key={b.id} className="flex items-center gap-1.5 overflow-hidden">
+                       <div className="min-w-[4px] h-3 rounded-full shrink-0" style={{ backgroundColor: data.entities.find(e => e.id === b.entidadeId)?.color }} />
+                       <span className={`text-[10px] truncate ${b.pago ? 'text-slate-600 line-through' : 'text-slate-300'}`}>{b.nome}</span>
                     </div>
                   ))}
-                  {dayBoletos.length > 2 && (
-                    <span className="text-[9px] text-slate-600 font-bold">+{dayBoletos.length - 2} itens</span>
-                  )}
                 </div>
 
-                {/* Status Indicator */}
                 {dayBoletos.length > 0 && (
-                  <div className={`absolute bottom-3 right-3 w-2 h-2 rounded-full ${hasPending ? 'bg-rose-500 animate-pulse' : 'bg-emerald-500'}`}></div>
+                  <div className={`absolute top-3 right-3 w-2 h-2 rounded-full ${hasPending ? 'bg-rose-500 animate-pulse shadow-[0_0_8px_rgba(244,63,94,0.6)]' : 'bg-emerald-500'}`}></div>
                 )}
               </div>
             );
           })}
         </div>
 
-        {/* SALDOS INFERIORES */}
-        <footer className="mt-8 grid grid-cols-3 gap-6">
-          <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-            <p className="text-[10px] uppercase text-slate-500 font-bold tracking-widest mb-1">Total Pendente</p>
-            <p className="text-3xl font-mono text-rose-500">
-              {stats.pendente.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-            </p>
-          </div>
-          <div className="bg-slate-900/50 border border-slate-800 p-5 rounded-2xl">
-            <p className="text-[10px] uppercase text-slate-500 font-bold tracking-widest mb-1">Total Quitado</p>
-            <p className="text-3xl font-mono text-emerald-500">
-              {stats.pago.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-            </p>
-          </div>
-          <div className="bg-emerald-600 p-5 rounded-2xl flex flex-col justify-center">
-             <p className="text-[10px] uppercase text-emerald-100 font-bold tracking-widest mb-1">Dias Selecionados</p>
-             <p className="text-3xl font-bold text-white">{selectedDays.length || 'Todos'}</p>
-          </div>
+        {/* LISTA DE ITENS */}
+        <section className="mt-10 space-y-4">
+           <h3 className="text-lg font-bold text-white flex items-center gap-2">
+              <div className="w-1 h-5 bg-emerald-500 rounded-full"></div>
+              {selectedDay ? `Lançamentos do dia ${selectedDay}` : 'Todos os lançamentos do mês'}
+           </h3>
+           
+           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {(selectedDay ? filteredBoletos.filter(b => parseDateLocal(b.vencimento).getDate() === selectedDay) : filteredBoletos).map(b => (
+                <div key={b.id} className="bg-slate-900/40 border border-slate-800 rounded-2xl p-4 hover:border-slate-700 transition-colors group relative">
+                  <div className="flex items-start justify-between">
+                    <div className="flex gap-4">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xs font-bold shrink-0" 
+                           style={{ backgroundColor: `${data.entities.find(e => e.id === b.entidadeId)?.color}20`, color: data.entities.find(e => e.id === b.entidadeId)?.color }}>
+                        {getInitials(data.entities.find(e => e.id === b.entidadeId)?.name || '??')}
+                      </div>
+                      <div>
+                        <h4 className={`font-bold text-white ${b.pago ? 'line-through opacity-50' : ''}`}>{b.nome}</h4>
+                        <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">
+                          {data.entities.find(e => e.id === b.entidadeId)?.name}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                       <p className="font-mono text-lg font-bold text-white mr-2">
+                         {parseFloat(b.valorTotal).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                       </p>
+                       <div className="flex opacity-0 group-hover:opacity-100 transition-opacity">
+                         <button onClick={() => openEditBoleto(b)} className="p-2 text-slate-500 hover:text-emerald-400"><Edit2 size={18}/></button>
+                         <button onClick={() => deleteBoleto(b.id)} className="p-2 text-slate-500 hover:text-rose-500"><Trash2 size={18}/></button>
+                       </div>
+                       <button onClick={() => toggleBoletoStatus(b.id, 'pago')} className="transition-transform active:scale-90 ml-2">
+                          {b.pago ? <CheckSquare className="text-emerald-500" size={24} /> : <Square className="text-slate-700" size={24} />}
+                       </button>
+                    </div>
+                  </div>
+
+                  {b.tags && b.tags.length > 0 && (
+                    <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-800/50 pt-3">
+                       {b.tags.map(t => (
+                         <div key={t.id} className="flex items-center gap-2 bg-slate-800/50 px-2 py-1 rounded-lg border border-slate-700/50">
+                            <span className="text-[10px] text-emerald-400 font-bold">#{t.label}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">{parseFloat(t.value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                         </div>
+                       ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+           </div>
+        </section>
+
+        {/* RESUMO FINANCEIRO RODAPÉ */}
+        <footer className="mt-12 grid grid-cols-1 md:grid-cols-2 gap-4 pb-10">
+           <div className="bg-gradient-to-br from-slate-900 to-[#0a0c10] border border-slate-800 p-6 rounded-3xl flex justify-between items-center">
+              <div>
+                <p className="text-xs text-slate-500 uppercase font-bold tracking-widest mb-1">A Pagar {selectedDay ? `(Dia ${selectedDay})` : '(Mês)'}</p>
+                <p className="text-3xl font-mono text-rose-500 font-bold">
+                  {stats.pendente.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                </p>
+              </div>
+              <div className="w-12 h-12 bg-rose-500/10 rounded-2xl flex items-center justify-center text-rose-500">
+                <AlertCircle />
+              </div>
+           </div>
+           <div className="bg-gradient-to-br from-slate-900 to-[#0a0c10] border border-slate-800 p-6 rounded-3xl flex justify-between items-center">
+              <div>
+                <p className="text-xs text-slate-500 uppercase font-bold tracking-widest mb-1">Quitado {selectedDay ? `(Dia ${selectedDay})` : '(Mês)'}</p>
+                <p className="text-3xl font-mono text-emerald-500 font-bold">
+                  {stats.pago.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                </p>
+              </div>
+              <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500">
+                <CheckSquare />
+              </div>
+           </div>
         </footer>
       </main>
 
-      {/* BARRA DIREITA: ENTIDADES */}
-      <aside className="w-24 border-l border-slate-800 p-4 flex flex-col items-center gap-6 bg-[#0f1115]">
-        <button 
-          onClick={deselectAll}
-          className="text-[10px] uppercase bg-slate-800 hover:bg-slate-700 p-2 rounded-lg text-center leading-tight transition-colors active:scale-90"
-        >
-          Limpar Filtros
-        </button>
-
-        <div className="flex flex-col gap-4 overflow-y-auto flex-1 w-full items-center custom-scrollbar">
-          {data.entities.map(ent => (
-            <div key={ent.id} className="relative group flex flex-col items-center gap-1">
-              <button 
-                onClick={() => toggleEntity(ent.id)}
-                className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-300 border-2
-                  ${ent.active 
-                    ? 'scale-110 shadow-[0_0_15px_rgba(16,185,129,0.3)]' 
-                    : 'opacity-30 grayscale border-transparent bg-slate-800'}
-                `}
-                style={{ borderColor: ent.active ? ent.color : 'transparent', backgroundColor: '#1e293b' }}
-              >
-                <span className="text-lg font-bold" style={{ color: ent.active ? ent.color : '#64748b' }}>
-                  {ent.name.substring(0, 2).toUpperCase()}
-                </span>
-              </button>
-              <span className="text-[9px] text-slate-500 text-center truncate w-full">{ent.name}</span>
-            </div>
-          ))}
-
-          <button 
-            onClick={() => setIsEntityModalOpen(true)}
-            className="w-12 h-12 rounded-full border-2 border-dashed border-slate-800 flex items-center justify-center text-slate-600 hover:border-emerald-500 hover:text-emerald-500 transition-all active:scale-90"
-          >
-            <Plus size={20} />
-          </button>
-        </div>
-      </aside>
-
-      {/* MODAIS */}
-      
-      {/* 1. Modal Detalhes do Dia */}
-      {isDayDetailOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#1a1d23] border border-slate-800 w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl">
-            <header className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
-              <h3 className="text-xl font-bold text-white">Pagamentos do Dia {isDayDetailOpen}</h3>
-              <button onClick={() => setIsDayDetailOpen(null)} className="p-2 hover:bg-slate-800 rounded-full"><X/></button>
+      {/* MODAL: NOVO/EDITAR LANÇAMENTO */}
+      {isBoletoModalOpen && (
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+          <form onSubmit={handleAddOrUpdateBoleto} className="bg-[#161a21] border border-slate-800 w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            <header className="p-6 border-b border-slate-800 flex justify-between items-center">
+              <h3 className="text-xl font-bold">{editingBoletoId ? 'Editar Pagamento' : 'Lançar Novo Pagamento'}</h3>
+              <button type="button" onClick={closeBoletoModal} className="text-slate-500 hover:text-white"><X/></button>
             </header>
-            <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
-              {filteredBoletos.filter(b => new Date(b.vencimento).getDate() === isDayDetailOpen).length === 0 ? (
-                <p className="text-center text-slate-500 py-8 italic">Nenhum boleto para este dia.</p>
+            
+            <div className="p-6 space-y-6 overflow-y-auto no-scrollbar">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-4">
+                   <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">Descrição Principal</label>
+                      <input required placeholder="Ex: Cartão de Crédito" value={newBoleto.nome} onChange={e => setNewBoleto({...newBoleto, nome: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 outline-none focus:ring-1 focus:ring-emerald-500" />
+                   </div>
+                   <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">Valor Total do Boleto</label>
+                      <input required type="number" step="0.01" placeholder="R$ 0,00" value={newBoleto.valorTotal} onChange={e => setNewBoleto({...newBoleto, valorTotal: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 outline-none focus:ring-1 focus:ring-emerald-500 font-mono text-emerald-400" />
+                   </div>
+                   <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">Vencimento</label>
+                      <input required type="date" value={newBoleto.vencimento} onChange={e => setNewBoleto({...newBoleto, vencimento: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 outline-none focus:ring-1 focus:ring-emerald-500" />
+                   </div>
+                   <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">Entidade Vinculada</label>
+                      <select required value={newBoleto.entidadeId} onChange={e => setNewBoleto({...newBoleto, entidadeId: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 outline-none focus:ring-1 focus:ring-emerald-500">
+                        <option value="">Selecione...</option>
+                        {data.entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                      </select>
+                   </div>
+                </div>
+
+                <div className="bg-slate-900/50 p-4 rounded-2xl border border-slate-800 space-y-4">
+                   <div className="flex items-center gap-2 text-emerald-500 mb-2">
+                      <TagIcon size={16}/>
+                      <h4 className="text-xs uppercase font-bold tracking-widest">Divisão por Categorias</h4>
+                   </div>
+                   
+                   <div className="flex flex-col gap-2">
+                      <input placeholder="Categoria (ex: Uber, Mercado)" value={tempTag.label} onChange={e => setTempTag({...tempTag, label: e.target.value})} className="bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs outline-none" />
+                      <div className="flex gap-2">
+                         <input type="number" placeholder="Valor" value={tempTag.value} onChange={e => setTempTag({...tempTag, value: e.target.value})} className="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs outline-none" />
+                         <button type="button" onClick={addTagToForm} className="bg-emerald-600 px-4 rounded-lg text-white font-bold text-xs">Add</button>
+                      </div>
+                   </div>
+
+                   <div className="space-y-2 mt-4 max-h-[150px] overflow-y-auto no-scrollbar">
+                      {newBoleto.tags.map(t => (
+                        <div key={t.id} className="flex justify-between items-center bg-slate-950 p-2 rounded-lg border border-slate-800">
+                           <div className="flex flex-col">
+                              <span className="text-[10px] text-emerald-500 font-bold">#{t.label}</span>
+                              <span className="text-xs font-mono text-slate-300">R$ {parseFloat(t.value).toFixed(2)}</span>
+                           </div>
+                           <button type="button" onClick={() => removeTagFromForm(t.id)} className="text-slate-600 hover:text-rose-500"><X size={14}/></button>
+                        </div>
+                      ))}
+                      {newBoleto.tags.length === 0 && <p className="text-[10px] text-slate-600 italic text-center py-4">Nenhuma categoria detalhada.</p>}
+                   </div>
+                </div>
+              </div>
+            </div>
+
+            <footer className="p-6 bg-slate-900/50 border-t border-slate-800 flex gap-4">
+              <button type="button" onClick={closeBoletoModal} className="flex-1 py-3 rounded-xl border border-slate-800 text-slate-500 font-bold">Cancelar</button>
+              <button type="submit" className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold">
+                {editingBoletoId ? 'Salvar Alterações' : 'Salvar Lançamento'}
+              </button>
+            </footer>
+          </form>
+        </div>
+      )}
+
+      {/* MODAL: ANALYTICS */}
+      {isAnalyticsOpen && (
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+          <div className="bg-[#161a21] border border-slate-800 w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl">
+            <header className="p-6 border-b border-slate-800 flex justify-between items-center bg-emerald-500/5">
+              <h3 className="text-xl font-bold text-white flex items-center gap-2"><PieChart className="text-emerald-500"/> Gastos por Categoria</h3>
+              <button onClick={() => setIsAnalyticsOpen(false)} className="text-slate-500 hover:text-white"><X/></button>
+            </header>
+            <div className="p-6 overflow-y-auto max-h-[70vh] space-y-4 no-scrollbar">
+              {tagAnalytics.length === 0 ? (
+                <p className="text-center py-20 text-slate-600 italic">Cadastre gastos com categorias para ver o gráfico.</p>
               ) : (
-                filteredBoletos.filter(b => new Date(b.vencimento).getDate() === isDayDetailOpen).map(b => (
-                  <div key={b.id} className="bg-slate-900/50 border border-slate-800 p-4 rounded-2xl flex items-center justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-bold text-white">{b.nome}</span>
-                        {b.repetir && <Repeat size={12} className="text-blue-400" />}
+                tagAnalytics.map(([label, total]) => {
+                  const totalMonth = tagAnalytics.reduce((a, b) => a + b[1], 0);
+                  const perc = ((total / totalMonth) * 100).toFixed(1);
+                  return (
+                    <div key={label} className="bg-slate-900/50 p-4 rounded-2xl border border-slate-800">
+                      <div className="flex justify-between items-center mb-3">
+                        <span className="font-bold text-emerald-500 uppercase text-xs tracking-widest">#{label}</span>
+                        <span className="font-mono text-white font-bold">{total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
                       </div>
-                      <div className="text-xs text-slate-500 flex items-center gap-3">
-                        <span className="font-mono text-emerald-400">{parseFloat(b.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
-                        <span>•</span>
-                        <span>{data.entities.find(e => e.id === b.entidadeId)?.name}</span>
+                      <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden">
+                        <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${perc}%` }} />
                       </div>
+                      <p className="text-[10px] text-right text-slate-600 mt-2 font-bold">{perc}% do total detalhado</p>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <button 
-                        onClick={() => toggleBoletoStatus(b.id, 'emitido')}
-                        className={`p-2 rounded-lg transition-colors ${b.emitido ? 'bg-blue-500/20 text-blue-400' : 'bg-slate-800 text-slate-600'}`}
-                        title="Impresso/Emitido"
-                      >
-                        <Printer size={18} />
-                      </button>
-                      <button 
-                        onClick={() => toggleBoletoStatus(b.id, 'pago')}
-                        className={`p-2 rounded-lg transition-colors ${b.pago ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-600'}`}
-                      >
-                        {b.pago ? <CheckCircle size={18} /> : <XCircle size={18} />}
-                      </button>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* 2. Modal Novo Boleto */}
-      {isBoletoModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <form onSubmit={handleAddBoleto} className="bg-[#1a1d23] border border-slate-800 w-full max-w-md rounded-3xl overflow-hidden">
+      {/* MODAL: CONFIGURAÇÃO DE EMPRESAS */}
+      {isEntityConfigOpen && (
+        <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+          <div className="bg-[#161a21] border border-slate-800 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl">
             <header className="p-6 border-b border-slate-800 flex justify-between items-center">
-              <h3 className="text-xl font-bold">Novo Boleto</h3>
-              <button type="button" onClick={() => setIsBoletoModalOpen(false)}><X/></button>
+              <h3 className="text-xl font-bold">Entidades</h3>
+              <button onClick={() => setIsEntityConfigOpen(false)} className="text-slate-500 hover:text-white"><X/></button>
             </header>
-            <div className="p-6 space-y-4">
-              <input 
-                required 
-                placeholder="Nome do pagamento"
-                value={newBoleto.nome}
-                onChange={e => setNewBoleto({...newBoleto, nome: e.target.value})}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 outline-none focus:ring-1 focus:ring-emerald-500"
-              />
-              <div className="flex gap-4">
-                <input 
-                  required 
-                  type="number" 
-                  step="0.01"
-                  placeholder="Valor (R$)"
-                  value={newBoleto.valor}
-                  onChange={e => setNewBoleto({...newBoleto, valor: e.target.value})}
-                  className="w-1/2 bg-slate-900 border border-slate-800 rounded-xl p-3 outline-none focus:ring-1 focus:ring-emerald-500"
-                />
-                <input 
-                  required 
-                  type="date"
-                  value={newBoleto.vencimento}
-                  onChange={e => setNewBoleto({...newBoleto, vencimento: e.target.value})}
-                  className="w-1/2 bg-slate-900 border border-slate-800 rounded-xl p-3 outline-none focus:ring-1 focus:ring-emerald-500"
-                />
+            <div className="p-6 space-y-6">
+              <div className="space-y-3">
+                {data.entities.map(ent => (
+                  <div key={ent.id} className="flex items-center justify-between bg-slate-900/50 p-3 rounded-xl border border-slate-800">
+                    <div className="flex items-center gap-3">
+                      <div className="w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: ent.color, color: 'white' }}>{getInitials(ent.name)}</div>
+                      <span className="text-sm font-medium">{ent.name}</span>
+                    </div>
+                    <button onClick={() => setEditingEntity(ent)} className="p-2 text-slate-500 hover:text-white"><Edit2 size={16}/></button>
+                  </div>
+                ))}
               </div>
-              <select 
-                required
-                value={newBoleto.entidadeId}
-                onChange={e => setNewBoleto({...newBoleto, entidadeId: e.target.value})}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 outline-none focus:ring-1 focus:ring-emerald-500"
-              >
-                <option value="">Selecione a Entidade</option>
-                {data.entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-              </select>
-              <div className="flex items-center gap-6 p-2">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={newBoleto.repetir} onChange={e => setNewBoleto({...newBoleto, repetir: e.target.checked})} className="accent-emerald-500" />
-                  <span className="text-sm">Repetir Mensalmente</span>
-                </label>
-              </div>
-            </div>
-            <footer className="p-6 bg-slate-900/50 flex gap-3">
-              <button type="button" onClick={() => setIsBoletoModalOpen(false)} className="flex-1 py-3 rounded-xl border border-slate-800 hover:bg-slate-800 transition-colors">Cancelar</button>
-              <button type="submit" className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-all">Salvar</button>
-            </footer>
-          </form>
-        </div>
-      )}
-
-      {/* 3. Modal Nova Entidade */}
-      {isEntityModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#1a1d23] border border-slate-800 w-full max-w-sm rounded-3xl p-6">
-            <h3 className="text-xl font-bold mb-4 text-white">Adicionar Entidade</h3>
-            <input 
-              id="entName"
-              placeholder="Nome da Empresa (ex: Matriz)"
-              className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 outline-none focus:ring-1 focus:ring-emerald-500 mb-4"
-            />
-            <div className="flex gap-2">
-              <button 
-                onClick={() => setIsEntityModalOpen(false)}
-                className="flex-1 py-2 rounded-xl border border-slate-800"
-              >
-                Cancelar
-              </button>
-              <button 
-                onClick={() => {
-                  const name = document.getElementById('entName').value;
-                  if (!name) return;
-                  const colors = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
-                  const color = colors[data.entities.length % colors.length];
-                  setData(prev => ({
-                    ...prev,
-                    entities: [...prev.entities, { id: crypto.randomUUID(), name, active: true, color }]
-                  }));
-                  setIsEntityModalOpen(false);
-                }}
-                className="flex-1 py-2 rounded-xl bg-emerald-600 text-white font-bold"
-              >
-                Criar
-              </button>
+              <form onSubmit={handleSaveEntity} className="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-4">
+                <input name="name" required defaultValue={editingEntity?.name || ''} placeholder="Nome completo da entidade" className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 outline-none focus:ring-1 focus:ring-emerald-500" />
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">Cor de Identificação</span>
+                  <input name="color" type="color" defaultValue={editingEntity?.color || '#10b981'} className="w-10 h-10 bg-transparent border-0 cursor-pointer" />
+                </div>
+                <button type="submit" className="w-full bg-emerald-600 text-white py-2 rounded-xl font-bold">{editingEntity ? 'Salvar Alterações' : 'Criar Entidade'}</button>
+              </form>
             </div>
           </div>
         </div>
       )}
 
       <style>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #334155; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
-
     </div>
   );
 };
