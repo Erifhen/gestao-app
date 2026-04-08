@@ -206,6 +206,8 @@ const App = () => {
     }));
   };
 
+  // --- AÇÕES DE ENTIDADE ATUALIZADAS ---
+
   const handleSaveEntity = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -223,7 +225,43 @@ const App = () => {
         entities: [...prev.entities, { id: crypto.randomUUID(), name, color, active: true }]
       }));
     }
+
+    // RESET: Limpa o estado de edição e o formulário
     setEditingEntity(null);
+    e.target.reset();
+  };
+
+  const deleteEntity = (id) => {
+    // Opcional: Validar se existem boletos vinculados antes de deletar
+    if (window.confirm("Tem certeza que deseja excluir esta entidade? Isso não removerá os boletos existentes, mas eles podem perder o vínculo.")) {
+      setData(prev => ({
+        ...prev,
+        entities: prev.entities.filter(ent => ent.id !== id)
+      }));
+
+      // Se estiver editando a que foi excluída, limpa o form
+      if (editingEntity?.id === id) {
+        setEditingEntity(null);
+      }
+    }
+  };
+
+  const formatCurrency = (value) => {
+    // Remove tudo que não é dígito
+    const digits = value.replace(/\D/g, '');
+
+    // Converte para centavos e depois para decimal
+    const amount = (Number(digits) / 100).toFixed(2);
+
+    return amount;
+  };
+
+  // Auxiliar para exibição visual (opcional, mas ajuda no input)
+  const maskCurrency = (value) => {
+    return new Intl.NumberFormat('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value || 0);
   };
 
   return (
@@ -474,16 +512,34 @@ const App = () => {
                     <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">Descrição</label>
                     <input required placeholder="Ex: Cartão de Crédito" value={newBoleto.nome} onChange={e => setNewBoleto({ ...newBoleto, nome: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 outline-none focus:ring-1 focus:ring-emerald-500" />
                   </div>
+
                   <div className="grid grid-cols-2 gap-3">
+                    {/* CAMPO: VALOR TOTAL COM MÁSCARA */}
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">Valor Total</label>
-                      <input required type="number" step="0.01" placeholder="0,00" value={newBoleto.valorTotal} onChange={e => setNewBoleto({ ...newBoleto, valorTotal: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 outline-none focus:ring-1 focus:ring-emerald-500 font-mono text-emerald-400" />
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-mono">R$</span>
+                        <input
+                          required
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="0,00"
+                          value={maskCurrency(newBoleto.valorTotal)}
+                          onChange={e => {
+                            const rawValue = formatCurrency(e.target.value);
+                            setNewBoleto({ ...newBoleto, valorTotal: rawValue });
+                          }}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 pl-9 outline-none focus:ring-1 focus:ring-emerald-500 font-mono text-emerald-400"
+                        />
+                      </div>
                     </div>
+
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">Vencimento</label>
                       <input required type="date" value={newBoleto.vencimento} onChange={e => setNewBoleto({ ...newBoleto, vencimento: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 outline-none focus:ring-1 focus:ring-emerald-500 text-xs" />
                     </div>
                   </div>
+
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">Entidade Pagadora</label>
                     <select required value={newBoleto.entidadeId} onChange={e => setNewBoleto({ ...newBoleto, entidadeId: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 outline-none focus:ring-1 focus:ring-emerald-500">
@@ -501,9 +557,24 @@ const App = () => {
 
                   <div className="flex flex-col gap-2">
                     <input placeholder="Categoria (ex: Uber, Mercado)" value={tempTag.label} onChange={e => setTempTag({ ...tempTag, label: e.target.value })} className="bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs outline-none" />
+
                     <div className="flex gap-2">
-                      <input type="number" placeholder="Valor" value={tempTag.value} onChange={e => setTempTag({ ...tempTag, value: e.target.value })} className="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs outline-none" />
-                      <button type="button" onClick={addTagToForm} className="bg-emerald-600 px-4 rounded-lg text-white font-bold text-xs">Add</button>
+                      {/* CAMPO: VALOR DA TAG COM MÁSCARA */}
+                      <div className="relative flex-1">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-600 text-[10px] font-mono">R$</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="0,00"
+                          value={maskCurrency(tempTag.value)}
+                          onChange={e => {
+                            const rawValue = formatCurrency(e.target.value);
+                            setTempTag({ ...tempTag, value: rawValue });
+                          }}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 pl-7 text-xs outline-none font-mono text-emerald-400/80"
+                        />
+                      </div>
+                      <button type="button" onClick={addTagToForm} className="bg-emerald-600 px-4 rounded-lg text-white font-bold text-xs hover:bg-emerald-500 transition-colors">Add</button>
                     </div>
                   </div>
 
@@ -512,9 +583,9 @@ const App = () => {
                       <div key={t.id} className="flex justify-between items-center bg-slate-950 p-2 rounded-lg border border-slate-800">
                         <div className="flex flex-col">
                           <span className="text-[10px] text-emerald-500 font-bold">#{t.label}</span>
-                          <span className="text-xs font-mono text-slate-300">R$ {parseFloat(t.value).toFixed(2)}</span>
+                          <span className="text-xs font-mono text-slate-300">R$ {maskCurrency(t.value)}</span>
                         </div>
-                        <button type="button" onClick={() => removeTagFromForm(t.id)} className="text-slate-600 hover:text-rose-500 p-1"><X size={14} /></button>
+                        <button type="button" onClick={() => removeTagFromForm(t.id)} className="text-slate-600 hover:text-rose-500 p-1 transition-colors"><X size={14} /></button>
                       </div>
                     ))}
                     {newBoleto.tags.length === 0 && <p className="text-[10px] text-slate-600 italic text-center py-4">Nenhuma categoria detalhada.</p>}
@@ -524,8 +595,8 @@ const App = () => {
             </div>
 
             <footer className="p-4 md:p-6 bg-slate-900/50 border-t border-slate-800 flex gap-3">
-              <button type="button" onClick={closeBoletoModal} className="flex-1 py-3 rounded-xl border border-slate-800 text-slate-500 font-bold text-sm">Cancelar</button>
-              <button type="submit" className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm">
+              <button type="button" onClick={closeBoletoModal} className="flex-1 py-3 rounded-xl border border-slate-800 text-slate-500 font-bold text-sm hover:bg-slate-800 transition-colors">Cancelar</button>
+              <button type="submit" className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm transition-colors">
                 Salvar
               </button>
             </footer>
@@ -533,79 +604,127 @@ const App = () => {
         </div>
       )}
 
-      {/* OUTROS MODAIS */}
-      {isAnalyticsOpen && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-          <div className="bg-[#161a21] border border-slate-800 w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl">
-            <header className="p-6 border-b border-slate-800 flex justify-between items-center bg-emerald-500/5">
-              <h3 className="text-xl font-bold text-white flex items-center gap-2"><PieChart className="text-emerald-500" /> Gastos</h3>
-              <button onClick={() => setIsAnalyticsOpen(false)} className="text-slate-500 p-2"><X /></button>
-            </header>
-            <div className="p-6 overflow-y-auto max-h-[70vh] space-y-4 no-scrollbar">
-              {tagAnalytics.length === 0 ? (
-                <p className="text-center py-20 text-slate-600 italic">Sem categorias cadastradas.</p>
-              ) : (
-                tagAnalytics.map(([label, total]) => {
-                  const totalMonth = tagAnalytics.reduce((a, b) => a + b[1], 0);
-                  const perc = ((total / totalMonth) * 100).toFixed(1);
-                  return (
-                    <div key={label} className="bg-slate-900/50 p-4 rounded-2xl border border-slate-800">
-                      <div className="flex justify-between items-center mb-3">
-                        <span className="font-bold text-emerald-500 uppercase text-xs tracking-widest">#{label}</span>
-                        <span className="font-mono text-white font-bold text-sm">{total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+      {/* MODAL: ANALYTICS */}
+      {
+        isAnalyticsOpen && (
+          <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+            <div className="bg-[#161a21] border border-slate-800 w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl">
+              <header className="p-6 border-b border-slate-800 flex justify-between items-center bg-emerald-500/5">
+                <h3 className="text-xl font-bold text-white flex items-center gap-2"><PieChart className="text-emerald-500" /> Gastos por Categoria</h3>
+                <button onClick={() => setIsAnalyticsOpen(false)} className="text-slate-500 hover:text-white"><X /></button>
+              </header>
+              <div className="p-6 overflow-y-auto max-h-[70vh] space-y-4 no-scrollbar">
+                {tagAnalytics.length === 0 ? (
+                  <p className="text-center py-20 text-slate-600 italic">Cadastre gastos com categorias para ver o gráfico.</p>
+                ) : (
+                  tagAnalytics.map(([label, total]) => {
+                    const totalMonth = tagAnalytics.reduce((a, b) => a + b[1], 0);
+                    const perc = ((total / totalMonth) * 100).toFixed(1);
+                    return (
+                      <div key={label} className="bg-slate-900/50 p-4 rounded-2xl border border-slate-800">
+                        <div className="flex justify-between items-center mb-3">
+                          <span className="font-bold text-emerald-500 uppercase text-xs tracking-widest">#{label}</span>
+                          <span className="font-mono text-white font-bold">{total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                        </div>
+                        <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden">
+                          <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${perc}%` }} />
+                        </div>
+                        <p className="text-[10px] text-right text-slate-600 mt-2 font-bold">{perc}% do total detalhado</p>
                       </div>
-                      <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden">
-                        <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${perc}%` }} />
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isEntityConfigOpen && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[100] flex items-center justify-center p-4">
-          <div className="bg-[#161a21] border border-slate-800 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl">
-            <header className="p-6 border-b border-slate-800 flex justify-between items-center">
-              <h3 className="text-xl font-bold">Entidades</h3>
-              <button onClick={() => setIsEntityConfigOpen(false)} className="text-slate-500 p-2"><X /></button>
-            </header>
-            <div className="p-6 space-y-6">
-              <div className="space-y-2 max-h-[40vh] overflow-y-auto no-scrollbar">
-                {data.entities.map(ent => (
-                  <div key={ent.id} className="flex items-center justify-between bg-slate-900/50 p-3 rounded-xl border border-slate-800">
-                    <div className="flex items-center gap-3">
-                      <div className="w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: ent.color, color: 'white' }}>{getInitials(ent.name)}</div>
-                      <span className="text-sm font-medium">{ent.name}</span>
-                    </div>
-                    <button onClick={() => setEditingEntity(ent)} className="p-2 text-slate-500 hover:text-white"><Edit2 size={16} /></button>
-                  </div>
-                ))}
+                    );
+                  })
+                )}
               </div>
-              <form onSubmit={handleSaveEntity} className="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-4">
-                <input name="name" required defaultValue={editingEntity?.name || ''} placeholder="Nome da entidade" className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 outline-none focus:ring-1 focus:ring-emerald-500 text-sm" />
-                <div className="flex justify-between items-center">
-                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Cor</span>
-                  <input name="color" type="color" defaultValue={editingEntity?.color || '#10b981'} className="w-10 h-10 bg-transparent border-0 cursor-pointer" />
-                </div>
-                <button type="submit" className="w-full bg-emerald-600 text-white py-2 rounded-xl font-bold text-sm">{editingEntity ? 'Salvar' : 'Criar'}</button>
-              </form>
             </div>
           </div>
-        </div>
-      )}
+        )
+      }
+
+      {/* MODAL: CONFIGURAÇÃO DE EMPRESAS */}
+      {
+        isEntityConfigOpen && (
+          <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[100] flex items-center justify-center p-4">
+            <div className="bg-[#161a21] border border-slate-800 w-full max-w-md rounded-3xl overflow-hidden shadow-2xl">
+              <header className="p-6 border-b border-slate-800 flex justify-between items-center">
+                <h3 className="text-xl font-bold">Entidades</h3>
+                <button onClick={() => { setIsEntityConfigOpen(false); setEditingEntity(null); }} className="text-slate-500 hover:text-white"><X /></button>
+              </header>
+
+              <div className="p-6 space-y-6">
+                <div className="space-y-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                  {data.entities.map(ent => (
+                    <div key={ent.id} className="flex items-center justify-between bg-slate-900/50 p-3 rounded-xl border border-slate-800 group">
+                      <div className="flex items-center gap-3">
+                        <div className="w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: ent.color, color: 'white' }}>
+                          {getInitials(ent.name)}
+                        </div>
+                        <span className="text-sm font-medium">{ent.name}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setEditingEntity(ent)} className="p-2 text-slate-500 hover:text-emerald-500 transition-colors">
+                          <Edit2 size={16} />
+                        </button>
+                        <button onClick={() => deleteEntity(ent.id)} className="p-2 text-slate-500 hover:text-red-500 transition-colors">
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <form
+                  key={editingEntity?.id || 'new'} // A KEY força o React a remontar o form e limpar campos ao mudar de entidade
+                  onSubmit={handleSaveEntity}
+                  className="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-4"
+                >
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs font-bold text-emerald-500 uppercase tracking-widest">
+                      {editingEntity ? 'Editando Entidade' : 'Nova Entidade'}
+                    </span>
+                    {editingEntity && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingEntity(null)}
+                        className="text-[10px] text-slate-500 hover:text-white underline"
+                      >
+                        Cancelar
+                      </button>
+                    )}
+                  </div>
+
+                  <input
+                    name="name"
+                    required
+                    defaultValue={editingEntity?.name || ''}
+                    placeholder="Nome da entidade"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2 outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">Cor</span>
+                    <input
+                      name="color"
+                      type="color"
+                      defaultValue={editingEntity?.color || '#10b981'}
+                      className="w-10 h-10 bg-transparent border-0 cursor-pointer"
+                    />
+                  </div>
+
+                  <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-xl font-bold transition-colors">
+                    {editingEntity ? 'Salvar Alterações' : 'Criar Entidade'}
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        )
+      }
 
       <style>{`
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        input[type="date"]::-webkit-calendar-picker-indicator {
-          filter: invert(1);
-        }
       `}</style>
-    </div>
+    </div >
   );
 };
 
